@@ -1,0 +1,52 @@
+package com.mysite.irms.service;
+
+import com.mysite.irms.entity.KeyPairEntity;
+import com.mysite.irms.entity.User;
+import com.mysite.irms.repository.KeyRepository;
+import com.mysite.irms.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import javax.crypto.Cipher;
+import java.security.*;
+import java.util.Base64;
+
+@Service
+@RequiredArgsConstructor
+public class KeyService {
+	private final KeyRepository keyRepository;
+	private final UserRepository userRepository;
+
+	public void generateKeyPairForUser(String username) {
+		User user = userRepository.findByUsername(username)
+				.orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + username));
+		if (keyRepository.findByUser(user).isPresent()) {
+			throw new IllegalStateException("이미 키가 존재합니다.");
+		}
+
+		try {
+			// RSA 키 쌍 생성
+			KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+			keyGen.initialize(2048);
+			KeyPair keyPair = keyGen.generateKeyPair();
+
+			String publicKeyPem = encodeToPem("PUBLIC KEY", keyPair.getPublic().getEncoded());
+			String privateKeyPem = encodeToPem("PRIVATE KEY", keyPair.getPrivate().getEncoded());
+
+			KeyPairEntity entity = KeyPairEntity.builder().user(user).publicKey(publicKeyPem).privateKey(privateKeyPem)
+					.build();
+
+			keyRepository.save(entity);
+			;
+
+		} catch (NoSuchAlgorithmException e) {
+			throw new RuntimeException("RSA 키 생성 실패", e);
+		}
+	}
+
+	public KeyPairEntity getUserKeyPair(String username) {
+		User user = userRepository.findByUsername(username)
+				.orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + username));
+
+		return keyRepository.findByUser(user).orElseThrow(() -> new IllegalStateException("사용자의 키 쌍이 존재하지 않습니다."));
+	}
+}

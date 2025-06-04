@@ -1,0 +1,24 @@
+spring.application.name=irms
+
+server.port=8080
+
+spring.datesource.url=jdbc:h2:mem:envelope-db
+spring.datasource.driverClassName=org.h2.Driver
+spring.datasource.username=sa
+spring.datasource.password=
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+spring.jpa.hibernate.ddl-auto=create
+spring.h2.console.enabled=true
+spring.h2.console.path=/h2-console
+
+jwt.secret=MySuperSecureSecretKeyThatShouldBe32Bytes
+# 1일 = 24시간 (밀리초)
+jwt.expiration=86400000  
+
+# 파일 저장경로
+file.upload-dir=uploads/envelopes
+
+allowed.origin=http://localhost:3000
+
+logging.level.org.springframework=INFO
+logging.level.com.mysite.irms=DEBUG

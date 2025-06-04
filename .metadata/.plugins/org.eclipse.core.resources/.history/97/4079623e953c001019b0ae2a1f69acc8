@@ -1,0 +1,45 @@
+package com.mysite.irms.util;
+
+import java.security.*;
+import java.util.Base64;
+
+import javax.crypto.Cipher;
+
+public class RSAUtil {
+	public static KeyPair generateKeyPair() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        return generator.generateKeyPair();
+    }
+
+    public static String signData(String data, PrivateKey privateKey) throws Exception {
+        Signature privateSignature = Signature.getInstance("SHA256withRSA");
+        privateSignature.initSign(privateKey);
+        privateSignature.update(data.getBytes());
+        byte[] signature = privateSignature.sign();
+        return Base64.getEncoder().encodeToString(signature);
+    }
+
+    public static boolean verifySignature(String data, String base64Signature, PublicKey publicKey) throws Exception {
+        Signature publicSignature = Signature.getInstance("SHA256withRSA");
+        publicSignature.initVerify(publicKey);
+        publicSignature.update(data.getBytes());
+        byte[] signature = Base64.getDecoder().decode(base64Signature);
+        return publicSignature.verify(signature);
+    }
+
+    public static String encryptWithPublicKey(String data, PublicKey publicKey) throws Exception {
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+        byte[] encrypted = cipher.doFinal(data.getBytes());
+        return Base64.getEncoder().encodeToString(encrypted);
+    }
+
+    public static String decryptWithPrivateKey(String base64Data, PrivateKey privateKey) throws Exception {
+        byte[] encryptedData = Base64.getDecoder().decode(base64Data);
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.DECRYPT_MODE, privateKey);
+        byte[] decrypted = cipher.doFinal(encryptedData);
+        return new String(decrypted);
+    }
+}

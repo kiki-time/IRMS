@@ -1,0 +1,43 @@
+package com.mysite.irms.service;
+
+import com.mysite.irms.dto.LoginRequest;
+import com.mysite.irms.dto.RegisterRequest;
+import com.mysite.irms.entity.User;
+import com.mysite.irms.repository.UserRepository;
+import com.mysite.irms.security.JwtTokenProvider;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+	private final UserRepository userRepository;
+	private final PasswordEncoder passwordEncoder;
+	private final JwtTokenProvider jwtTokenProvider;
+
+	public void register(RegisterRequest req) {
+		if (userRepository.existsByUsername(req.getUsername())) {
+			throw new RuntimeException("이미 존재하는 사용자입니다.");
+		}
+
+		if (userRepository.existsByEmail(req.getEmail())) {
+			throw new RuntimeException("이미 사용 중인 이메일입니다.");
+		}
+
+		User user = User.builder().username(req.getUsername()).email(req.getEmail())
+				.password(passwordEncoder.encode(req.getPassword())).build();
+
+		userRepository.save(user);
+	}
+    public String login(LoginRequest req) {
+        User user = userRepository.findByUsername(req.getUsername())
+                .orElseThrow(() -> new RuntimeException("존재하지 않는 사용자입니다."));
+
+        if (!passwordEncoder.matches(req.getPassword(), user.getPassword())) {
+            throw new RuntimeException("비밀번호가 틀렸습니다.");
+        }
+
+        return jwtTokenProvider.createToken(user.getUsername(), user.getRole());
+    }
+}

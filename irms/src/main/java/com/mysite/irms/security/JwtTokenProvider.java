@@ -1,0 +1,67 @@
+package com.mysite.irms.security;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
+
+import javax.crypto.SecretKey;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import jakarta.servlet.http.HttpServletRequest;
+
+@Component
+public class JwtTokenProvider {
+	@Value("${jwt.secret}")
+	private String secret;
+
+	@Value("${jwt.expiration}")
+	private long expiration;
+
+	private SecretKey getSigningKey() {
+		return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+	}
+
+	// jwt token 생성
+	public String createToken(String username, String role) {
+		Date now = new Date();
+		Date expiry = new Date(now.getTime() + expiration);
+
+		return Jwts.builder().subject(username).issuedAt(now).expiration(expiry).claim("role", role) // 권한
+				.signWith(getSigningKey(), Jwts.SIG.HS256).compact();
+	}
+
+	public String getUsername(String token) {
+		return Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload().getSubject();
+	}
+
+	public String getRole(String token) {
+		return (String) Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload()
+				.get("role");
+	}
+
+	public boolean validateToken(String token) {
+		try {
+			Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token);
+			return true;
+		} catch (JwtException | IllegalArgumentException e) {
+			return false;
+		}
+	}
+
+	public String resolveToken(HttpServletRequest request) {
+		String bearer = request.getHeader("Authorization");
+		if (bearer != null && bearer.startsWith("Bearer ")) {
+			return bearer.substring(7); // Bearer  제거
+		}
+		return null;
+	}
+
+	public String getUsernameFromToken(String token) {
+		return Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload().getSubject();
+	}
+
+}

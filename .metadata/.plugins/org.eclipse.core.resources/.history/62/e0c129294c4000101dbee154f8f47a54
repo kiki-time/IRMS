@@ -1,0 +1,83 @@
+package com.mysite.irms.controller;
+
+import com.mysite.irms.dto.LoginRequest;
+import com.mysite.irms.dto.RegisterRequest;
+import com.mysite.irms.entity.User;
+import com.mysite.irms.repository.UserRepository;
+import com.mysite.irms.security.JwtTokenProvider;
+import com.mysite.irms.service.AuthService;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import lombok.RequiredArgsConstructor;
+
+import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/auth")
+@RequiredArgsConstructor
+@CrossOrigin(origins = "http://localhost:3000", allowCredentials = "true")
+public class AuthController {
+	private final AuthService authService;
+	private final JwtTokenProvider jwtTokenProvider;
+	private final UserRepository userRepository;
+
+	@PostMapping("/register")
+	public ResponseEntity<?> register(@RequestBody RegisterRequest req) {
+		try {
+			authService.register(req);
+			return ResponseEntity.ok(Map.of("message", "회원가입 성공"));
+		} catch (IllegalArgumentException e) {
+			return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+		}
+	}
+
+	@PostMapping("/login")
+	public ResponseEntity<?> login(@RequestBody LoginRequest req, HttpSession session) {
+		try {
+			String token = authService.login(req);
+			session.setAttribute("username", req.getUsername());
+			return ResponseEntity.ok(Map.of("message", "로그인 성공", "username", req.getUsername(), "token", token));
+		} catch (IllegalArgumentException e) {
+			return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+		}
+	}
+
+	@PostMapping("/logout")
+	public ResponseEntity<?> logout(HttpSession session) {
+		session.invalidate();
+		return ResponseEntity.ok(Map.of("message", "로그아웃 성공"));
+	}
+
+	@GetMapping("/me")
+	public ResponseEntity<?> getCurrentUser(HttpSession session) {
+		String username = (String) session.getAttribute("username");
+		if (username == null) {
+			return ResponseEntity.status(401).body(Map.of("message", "로그인 필요"));
+		}
+		return ResponseEntity.ok(Map.of("username", username));
+	}
+
+	@PostMapping("/change-password")
+	public ResponseEntity<?> changePassword(@RequestBody Map<String, String> request, HttpServletRequest httpRequest) {
+		try {
+			String token = jwtTokenProvider.resolveToken(httpRequest);
+			String username = jwtTokenProvider.getUsername(token);
+
+			String currentPassword = request.get("password");
+			String newPassword = request.get("newPassword");
+
+			authService.changePassword(username, currentPassword, newPassword);
+			return ResponseEntity.ok(Map.of("message", "비밀번호 변경 성공"));
+
+		} catch (IllegalArgumentException e) {
+			return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+		} catch (RuntimeException e) {
+			return ResponseEntity.status(403).body(Map.of("message", e.getMessage()));
+		}
+	}
+
+}

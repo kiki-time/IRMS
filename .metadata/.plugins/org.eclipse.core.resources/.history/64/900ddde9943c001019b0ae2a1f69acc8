@@ -1,0 +1,26 @@
+package com.mysite.irms.util;
+
+import java.security.*;
+import java.util.Base64;
+
+public class RSAUtil {
+	public static KeyPair generateKeyPair() throws Exception {
+		KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+		generator.initialize(2048);
+		return generator.generateKeyPair();
+	}
+
+	public static String signData(String data, PrivateKey privateKey) throws Exception {
+		Signature signer = Signature.getInstance("SHA256withRSA");
+		signer.initSign(privateKey);
+		signer.update(data.getBytes());
+		return Base64.getEncoder().encodeToString(signer.sign());
+	}
+
+	public static boolean verifySignature(String data, String signature, PublicKey publicKey) throws Exception {
+		Signature verifier = Signature.getInstance("SHA256withRSA");
+		verifier.initVerify(publicKey);
+		verifier.update(data.getBytes());
+		return verifier.verify(Base64.getDecoder().decode(signature));
+	}
+}

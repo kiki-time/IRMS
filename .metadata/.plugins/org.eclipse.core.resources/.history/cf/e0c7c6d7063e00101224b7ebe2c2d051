@@ -1,0 +1,192 @@
+package com.mysite.irms.service;
+
+import com.mysite.irms.dto.EnvelopeTransferRequest;
+import com.mysite.irms.entity.Envelope;
+import com.mysite.irms.entity.User;
+import com.mysite.irms.repository.EnvelopeRepository;
+import com.mysite.irms.repository.UserRepository;
+import com.mysite.irms.util.AESUtil;
+import com.mysite.irms.util.RSAUtil;
+import jakarta.annotation.PostConstruct;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyPair;
+import java.time.LocalDateTime;
+import java.util.Base64;
+import java.util.List;
+import java.util.UUID;
+import javax.crypto.SecretKey;
+
+@Service
+@RequiredArgsConstructor
+public class EnvelopeService {
+	private final EnvelopeRepository envelopeRepository;
+
+	@Value("${file.upload-dir}")
+	private String uploadDir;
+
+	private KeyPair keyPair;
+
+	@PostConstruct
+	public void init() throws Exception {
+		// 서비스 시작 -> RSA 키쌍 생성 (데모용), 나중에 수정 필요
+		keyPair = RSAUtil.generateKeyPair();
+	}
+
+	public void saveEncryptedEnvelope(MultipartFile file, String username) throws Exception {
+		// 파일명 랜덤 처리
+		String originalFileName = file.getOriginalFilename();
+		String uniqueFileName = UUID.randomUUID().toString() + ".enc";
+
+		// aes 대칭키 생성, 파일 암호화
+		SecretKey aesKey = AESUtil.generateKey();
+		String fileContent = new String(file.getBytes());
+		String encryptedContent = AESUtil.encrypt(fileContent, aesKey);
+
+		// 서명 생성, 암호화된 데이터 기반
+		String signature = RSAUtil.signData(encryptedContent, keyPair.getPrivate());
+
+		// aes 키를 rsa 공개키로 암호화
+		String encodedAESKey = AESUtil.encodeKeyToBase64(aesKey);
+		String aesKeyEncrypted = RSAUtil.encryptWithPublicKey(encodedAESKey, keyPair.getPublic());
+
+		// 파일 저장
+		File folder = new File(uploadDir + "/" + username);
+		if (!folder.exists())
+			folder.mkdirs();
+
+		File targetFile = new File(folder, uniqueFileName);
+		try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+			fos.write(encryptedContent.getBytes());
+		}
+
+		// DB 저장
+		Envelope envelope = Envelope.builder().originalFileName(originalFileName)
+				.storedFileName("envelopes/" + username + "/" + uniqueFileName).uploaderUsername(username)
+				.uploadTime(LocalDateTime.now()).signature(signature).aesKeyEncrypted(aesKeyEncrypted).build();
+
+		envelopeRepository.save(envelope);
+	}
+
+	public ResponseEntity<Resource> downloadFileService(Long envelopeId, String username) throws Exception {
+		Envelope envelope = envelopeRepository.findById(envelopeId)
+				.orElseThrow(() -> new RuntimeException("해당 봉투를 찾을 수 없습니다."));
+
+		if (!envelope.getUploaderUsername().equals(username)) {
+			throw new RuntimeException("해당 파일에 접근 권한이 없습니다.");
+		}
+
+		Path filePath = Paths.get(uploadDir).resolve(envelope.getStoredFileName().replace("envelopes/", ""));
+		if (!Files.exists(filePath)) {
+			throw new RuntimeException("파일이 존재하지 않습니다.");
+		}
+
+		FileSystemResource resource = new FileSystemResource(filePath);
+		return ResponseEntity.ok()
+				.header(HttpHeaders.CONTENT_DISPOSITION,
+						"attachment; filename=\"" + envelope.getOriginalFileName() + "\"")
+				.contentType(MediaType.APPLICATION_OCTET_STREAM).body(resource);
+	}
+
+	public String verifyAndDecryptEnvelope(Long envelopeId, String username) throws Exception {
+		Envelope envelope = envelopeRepository.findById(envelopeId)
+				.orElseThrow(() -> new RuntimeException("해당 봉투를 찾을 수 없습니다."));
+
+		if (!envelope.getUploaderUsername().equals(username)) {
+			throw new RuntimeException("접근 권한이 없습니다.");
+		}
+
+		// 파일 경로 확인
+		Path filePath = Paths.get(uploadDir).resolve(envelope.getStoredFileName().replace("envelopes/", ""));
+		if (!Files.exists(filePath)) {
+			throw new RuntimeException("파일이 존재하지 않습니다.");
+		}
+
+		// 암호화된 파일 내용 읽기
+		String encryptedContent = Files.readString(filePath);
+
+		// 암호화된 AES 키 복호화
+		byte[] aesKeyBytes = RSAUtil.decryptWithPrivateKey(Base64.getDecoder().decode(envelope.getAesKeyEncrypted()),
+				keyPair.getPrivate());
+		SecretKey aesKey = AESUtil.decodeKeyFromBase64(new String(aesKeyBytes));
+
+		// AES 복호화
+		String decryptedContent = AESUtil.decrypt(encryptedContent, aesKey);
+
+		// 서명 검증
+		boolean isValid = RSAUtil.verifySignature(encryptedContent, envelope.getSignature(), keyPair.getPublic());
+		if (!isValid) {
+			throw new RuntimeException("서명 검증 실패: 데이터가 변조되었을 가능성이 있습니다.");
+		}
+
+		return decryptedContent;
+	}
+
+	@Transactional
+	public void transferEnvelope(EnvelopeTransferRequest request, String senderUsername) {
+		Envelope original = envelopeRepository.findById(request.getEnvelopeId())
+				.orElseThrow(() -> new RuntimeException("봉투를 찾을 수 없습니다."));
+
+		if (!original.getUploaderUsername().equals(senderUsername)) {
+			throw new RuntimeException("본인이 업로드한 봉투만 전달할 수 있습니다.");
+		}
+
+		Envelope copy = Envelope.builder().originalFileName(original.getOriginalFileName())
+				.storedFileName(original.getStoredFileName()) // 동일 파일
+				.uploadTime(LocalDateTime.now()).signature(original.getSignature())
+				.aesKeyEncrypted(original.getAesKeyEncrypted()).uploaderUsername(original.getUploaderUsername()) // 원본
+																													// 업로드한
+																													// 사람
+				.receiverUsername(request.getReceiverUsername()) // 전달받은 사람
+				.build();
+
+		envelopeRepository.save(copy);
+	}
+
+	public ResponseEntity<Resource> downloadEnvelopeFile(Long envelopeId, String requesterUsername) {
+		Envelope envelope = envelopeRepository.findById(envelopeId)
+				.orElseThrow(() -> new RuntimeException("해당 봉투를 찾을 수 없습니다."));
+
+		boolean isOwner = envelope.getUploaderUsername().equals(requesterUsername);
+		boolean isReceiver = requesterUsername.equals(envelope.getReceiverUsername());
+
+		if (!(isOwner || isReceiver)) {
+			throw new RuntimeException("해당 파일에 접근할 권한이 없습니다.");
+		}
+
+		File file = new File(uploadDir, envelope.getStoredFileName());
+		if (!file.exists()) {
+			throw new RuntimeException("파일이 존재하지 않습니다.");
+		}
+
+		Resource resource = new FileSystemResource(file);
+		return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM)
+				.header(HttpHeaders.CONTENT_DISPOSITION,
+						"attachment; filename=\"" + envelope.getOriginalFileName() + "\"")
+				.body(resource);
+	}
+
+	@Autowired
+	private UserRepository userRepository;
+
+	public List<String> searchUserByKeyword(String keyword) {
+		// username LIKE 검색 (예: "%key%")
+		return userRepository.findByUsernameContaining(keyword).stream().map(User::getUsername).toList();
+	}
+
+}

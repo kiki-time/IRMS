@@ -1,0 +1,5 @@
+package com.mysite.irms.controller;
+
+public class KeyController {
+
+}
